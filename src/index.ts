@@ -19,6 +19,7 @@ import { generatePeerId } from "./utils/crypto";
 import { TerminalUI } from "./ui/terminal";
 import { runInteractiveWizard } from "./ui/wizard";
 import { getPrimaryLanIp, generateShortRoomCode, parseConnectionString } from "./utils/network";
+import { connectManually } from "./p2p/manual";
 
 const program = new Command();
 
@@ -181,103 +182,6 @@ async function connectViaSignaling(
 
   TerminalUI.printConnectionCard({
     room,
-    role,
-    mode: "collab",
-    sas: peer.sas || undefined,
-    latencyMs: peer.currentRtt,
-  });
-
-  return peer;
-}
-
-/**
- * Establish a WebRTC connection manually via air-gapped Base64 SDP token exchange
- */
-async function connectManually(role: "host" | "client", options: { showQr?: boolean } = {}): Promise<P2PPeer> {
-  const peer = new P2PPeer({ role });
-
-  peer.on("error", (err) => {
-    console.error(pc.red("\n[bun-p2p] Peer error:"), err instanceof Error ? err.message : err);
-  });
-
-  TerminalUI.printBanner(role === "host" ? "Air-Gapped Host Pairing" : "Air-Gapped Client Pairing");
-
-  if (role === "host") {
-    console.log(pc.yellow("Gathering ICE candidates..."));
-    const local = await peer.gatherAllCandidates(1500);
-
-    const payload: ManualPayload = {
-      role: "host",
-      sdp: local.sdp,
-      sdpType: local.sdpType,
-      candidates: local.candidates,
-    };
-
-    const token = serializeManualPayload(payload);
-
-    console.log(pc.bold(pc.green("\n✔ Host Offer Generated!")));
-    console.log(pc.dim("Share this token with the client peer (or scan QR code):\n"));
-
-    if (options.showQr !== false) {
-      try {
-        qrcode.generate(token, { small: true });
-      } catch {
-        // ignore if terminal cannot render
-      }
-    }
-
-    console.log(pc.bgBlack(pc.cyan(`\n${token}\n`)));
-
-    const answerToken = await TerminalUI.prompt("Paste Client's Answer token: ");
-    const answerPayload = deserializeManualPayload(answerToken);
-
-    peer.setRemoteDescription(answerPayload.sdp, answerPayload.sdpType);
-    for (const c of answerPayload.candidates) {
-      peer.addRemoteCandidate(c.candidate, c.mid);
-    }
-  } else {
-    const offerToken = await TerminalUI.prompt("Paste Host's Offer token: ");
-    const offerPayload = deserializeManualPayload(offerToken);
-
-    peer.setRemoteDescription(offerPayload.sdp, offerPayload.sdpType);
-    for (const c of offerPayload.candidates) {
-      peer.addRemoteCandidate(c.candidate, c.mid);
-    }
-
-    console.log(pc.yellow("\nGenerating Answer token..."));
-    const local = await peer.gatherAllCandidates(1500);
-
-    const payload: ManualPayload = {
-      role: "client",
-      sdp: local.sdp,
-      sdpType: local.sdpType,
-      candidates: local.candidates,
-    };
-
-    const answerToken = serializeManualPayload(payload);
-
-    console.log(pc.bold(pc.green("\n✔ Client Answer Generated!")));
-    console.log(pc.dim("Paste this token back into the Host's terminal:\n"));
-
-    if (options.showQr !== false) {
-      try {
-        qrcode.generate(answerToken, { small: true });
-      } catch {
-        // ignore
-      }
-    }
-
-    console.log(pc.bgBlack(pc.cyan(`\n${answerToken}\n`)));
-  }
-
-  console.log(pc.yellow("Establishing direct P2P DataChannels..."));
-  await new Promise<void>((resolve) => {
-    peer.on("connected", () => {
-      resolve();
-    });
-  });
-
-  TerminalUI.printConnectionCard({
     role,
     mode: "collab",
     sas: peer.sas || undefined,

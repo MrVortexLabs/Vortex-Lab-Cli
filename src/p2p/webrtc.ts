@@ -91,6 +91,18 @@ export class P2PPeer extends EventEmitter {
       }
     });
 
+    this.pc.onIceStateChange((state: string) => {
+      this.emit("ice-state-change", state);
+    });
+
+    this.pc.onGatheringStateChange((state: string) => {
+      this.emit("gathering-state-change", state);
+    });
+
+    this.pc.onSignalingStateChange((state: string) => {
+      this.emit("signaling-state-change", state);
+    });
+
     this.pc.onDataChannel((dc: DataChannel) => {
       try {
         const label = dc.getLabel();
@@ -326,24 +338,57 @@ export class P2PPeer extends EventEmitter {
     });
   }
 
+  public async createOffer(timeoutMs = 1500): Promise<{
+    sdp: string;
+    sdpType: "offer";
+    candidates: Array<{ candidate: string; mid: string }>;
+  }> {
+    const res = await this.gatherAllCandidates(timeoutMs);
+    return {
+      sdp: res.sdp,
+      sdpType: "offer",
+      candidates: res.candidates,
+    };
+  }
+
+  public async createAnswer(timeoutMs = 1500): Promise<{
+    sdp: string;
+    sdpType: "answer";
+    candidates: Array<{ candidate: string; mid: string }>;
+  }> {
+    const res = await this.gatherAllCandidates(timeoutMs);
+    return {
+      sdp: res.sdp,
+      sdpType: "answer",
+      candidates: res.candidates,
+    };
+  }
+
   public async gatherAllCandidates(timeoutMs = 1500): Promise<{
     sdp: string;
     sdpType: "offer" | "answer";
     candidates: Array<{ candidate: string; mid: string }>;
   }> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        finish();
-      }, timeoutMs);
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
 
       const finish = () => {
-        clearTimeout(timer);
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+
         try {
           const desc = this.pc.localDescription();
           if (!desc) {
             reject(new Error("Local description not available after gathering"));
             return;
           }
+          this.localDescription = {
+            sdp: desc.sdp,
+            type: desc.type as "offer" | "answer",
+          };
+          this.deriveSAS();
           resolve({
             sdp: desc.sdp,
             sdpType: desc.type as "offer" | "answer",
@@ -353,6 +398,10 @@ export class P2PPeer extends EventEmitter {
           reject(err);
         }
       };
+
+      timer = setTimeout(() => {
+        finish();
+      }, timeoutMs);
 
       this.pc.onGatheringStateChange((state: string) => {
         if (state === "complete") {
